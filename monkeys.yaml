@@ -148,7 +148,35 @@ spec:
                     default: ${POSTGRES_USER}
                     expose: true
                     readonly: true
-         
+                POSTGRES_MULTIPLE_DATABASES:
+                    default: monkeys,conductor,oneapi
+            configs:
+              - path: /docker-entrypoint-initdb.d/init-databases.sh
+                template: |
+                  set -e
+                  set -u
+                  function create_database() {
+                    local database=$1
+                    if psql -lqt --username "$POSTGRES_USER"  | cut -d \| -f 1 | grep -qw $database; then
+                      echo "Database '$database' already exists"
+                      return
+                    else
+                      echo "Creating database '$database'"
+                      psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" -d monkeys <<-EOSQL
+                        CREATE DATABASE $database;
+                        GRANT ALL PRIVILEGES ON DATABASE $database TO root;
+                  EOSQL
+                      echo "Database '$database' created"
+                    fi
+                  }
+
+                  if [ -n "$POSTGRES_MULTIPLE_DATABASES" ]; then
+                    echo "Multiple database creation requested: $POSTGRES_MULTIPLE_DATABASES"
+                    for db in $(echo $POSTGRES_MULTIPLE_DATABASES | tr ',' ' '); do
+                      create_database $db
+                    done
+                    echo "Multiple databases created"
+                  fi
         - name: minio
           icon: https://raw.githubusercontent.com/zeabur/service-icons/main/marketplace/minio.svg
           template: PREBUILT
@@ -212,7 +240,6 @@ spec:
                     default: ${MINIO_ROOT_USER}
                     expose: true
                     readonly: true
-        
         - name: elasticsearch
           icon: https://static-00.iconduck.com/assets.00/elasticsearch-icon-1839x2048-g9zblqim.png
           template: PREBUILT
@@ -301,7 +328,6 @@ spec:
         #             default: ${POSTGRES_USER}
         #             expose: true
         #             readonly: true
-
         - name: conductor
           icon: https://avatars.githubusercontent.com/u/153258413?s=200&v=4
           template: PREBUILT
@@ -326,7 +352,7 @@ spec:
 
                     # postgres
                     conductor.db.type=postgres
-                    spring.datasource.url=jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DATABASE}
+                    spring.datasource.url=jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT}/conductor
                     spring.datasource.username=${POSTGRES_USERNAME}
                     spring.datasource.password=${POSTGRES_PASSWORD}
 
@@ -348,7 +374,6 @@ spec:
                     conductor.app.maxWorkflowVariablesPayloadSizeThreshold=100MB
                     conductor.app.workflowOffsetTimeout=10m
                     conductor.app.asyncUpdateShortRunningWorkflowDuration=10m
-
         - name: server
           icon: https://avatars.githubusercontent.com/u/160759882?s=200&v=4
           template: PREBUILT
@@ -356,6 +381,9 @@ spec:
             - db
             - redis
             - conductor
+            - monkey-tools-sandbox
+            - monkey-tools-midjourney
+            - monkey-tools-internet
           spec:
             source:
                 image: infmonkeys/monkeys:latest
@@ -382,14 +410,14 @@ spec:
                       port: ${POSTGRES_PORT}
                       username: ${POSTGRES_USERNAME}
                       password: ${POSTGRES_PASSWORD}
-                      database: ${POSTGRES_DATABASE}
+                      database: monkeys
                     redis:
                       url: $REDIS_URI
                     auth:
                       enabled:
                         - password
                     s3:
-                      endpoint: http://minio:9000
+                      endpoint: http://${MINIO_HOST}:9000
                       forcePathStyle: true
                       accessKeyId: ${MINIO_USERNAME}
                       secretAccessKey: ${MINIO_PASSWORD}
@@ -399,6 +427,35 @@ spec:
                     
                     conductor:
                       baseUrl: http://${CONDUCTOR_HOST}:8080/api
+                    
+                    tools:
+                      - name: monkey-tools-sandbox
+                        manifestUrl: http://${MONKEY_TOOLS_SANDBOX_HOST}:3000/manifest.json
+                      - name: monkey-tools-midjourney
+                        manifestUrl: http://${MONKEY_TOOLS_MIDJOURNEY_HOST}:3000/manifest.json
+                      - name: monkey-tools-internet
+                        manifestUrl: http://${MONKEY_TOOLS_INTERNET_HOST}:5000/manifest.json
+
+                    oneapi:
+                      enabled: true
+                      baseURL: http://${ONEAPI_HOST}:3000
+                      rootUsername: root
+                      rootPassword: "123456"
+        - name: oneapi
+          icon: https://raw.githubusercontent.com/songquanpeng/one-api/main/web/default/public/logo.png
+          template: PREBUILT
+          dependencies:
+            - db
+          spec:
+            source:
+                image: justsong/one-api:latest
+            ports:
+                - id: api
+                  port: 3000
+                  type: HTTP
+            env:
+              SQL_DSN:
+                default: postgres://${POSTGRES_USERNAME}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/oneapi
         - name: ui
           icon: https://avatars.githubusercontent.com/u/160759882?s=200&v=4
           template: PREBUILT
@@ -409,7 +466,6 @@ spec:
                 - id: web
                   port: 3000
                   type: HTTP
-
         - name: nginx
           icon: https://www.svgrepo.com/show/373924/nginx.svg
           template: PREBUILT
@@ -496,9 +552,52 @@ spec:
                   type: HTTP
             configs:
               - path: /etc/monkey-tools-sandbox/config.yaml
+                envsubst: true
                 template: |
                   server:
                     port: 3000
+        - name: monkey-tools-midjourney
+          icon: https://avatars.githubusercontent.com/u/160759882?s=200&v=4
+          template: PREBUILT
+          spec:
+            source:
+              image: infmonkeys/monkey-tools-midjourney:latest
+            ports:
+              - id: api
+                port: 3000
+                type: HTTP
+            configs:
+              - path: /usr/src/app/config.yaml
+                envsubst: true
+                template: |
+                  server: 
+                    port: 3000
+
+                  s3:
+                    endpoint: http://${MINIO_HOST}:9000
+                    forcePathStyle: true
+                    accessKeyId: ${MINIO_USERNAME}
+                    secretAccessKey: ${MINIO_PASSWORD}
+                    region: us-east-1
+                    bucket: monkeys
+                    publicAccessUrl: http://${ZEABUR_CONSOLE_URL}/monkeys
+        - name: monkey-tools-internet
+          icon: https://avatars.githubusercontent.com/u/160759882?s=200&v=4
+          template: PREBUILT
+          spec:
+            source:
+              image: infmonkeys/monkey-tools-internet:latest
+            ports:
+              - id: api
+                port: 5000
+                type: HTTP
+            configs:
+              - path: /app/config.yaml
+                envsubst: true
+                template: |
+                  server:
+                    port: 5000
+
         # - name: monkey-tools-knowledge-base
         #   icon: https://avatars.githubusercontent.com/u/160759882?s=200&v=4
         #   template: PREBUILT
@@ -515,13 +614,11 @@ spec:
         #         template: |
         #           server:
         #             port: 5000
-                  
         #           database:
         #             url: postgresql://${POSTGRES_USERNAME}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DATABASE}
         #             pool:
         #               pool_size: 30
         #               pool_recycle: 3600
-                  
         #           redis:
         #             url: $REDIS_URI
                   
@@ -540,102 +637,3 @@ spec:
         #             - name: moka-ai/m3e-base
         #               dimension: 768
 
-        - name: monkey-tools-midjourney
-          icon: https://avatars.githubusercontent.com/u/160759882?s=200&v=4
-          template: PREBUILT
-          spec:
-            source:
-              image: infmonkeys/monkey-tools-midjourney:latest
-            ports:
-              - id: api
-                port: 3000
-                type: HTTP
-            configs:
-              - path: /usr/src/app/config.yaml
-                template: |
-                  server: 
-                    port: 3000
-                  goapi:
-                    apikey: ${GOAPI_APIKEY}
-                  
-                  s3:
-                    endpoint: http://minio:9000
-                    forcePathStyle: true
-                    accessKeyId: ${MINIO_USERNAME}
-                    secretAccessKey: ${MINIO_PASSWORD}
-                    region: us-east-1
-                    bucket: monkeys
-                    publicAccessUrl: http://${ZEABUR_CONSOLE_URL}/monkeys
-
-    ja-JP:
-        description: Difyは、オープンソースの大規模言語モデル（LLM）アプリケーション開発プラットフォームです。
-        readme: |-
-            DifyはオープンソースのLLMアプリ開発プラットフォームです。その直感的なインターフェースは、AIワークフロー、RAGパイプライン、エージェント機能、モデル管理、可観測性機能などを組み合わせており、プロトタイプから本番環境への移行を迅速に行うことができます。
-
-            ## 機能
-
-            1. **ワークフロー**：視覚的なキャンバス上で強力なAIワークフローを構築し、テストします。以下のすべての機能およびそれ以上を活用します。
-            2. **包括的なモデルサポート**：数十の推論プロバイダーおよび自己ホスト型ソリューションから、数百の専有/オープンソースLLMとシームレスに統合されており、GPT、Mistral、Llama3、そしてOpenAI API互換のモデルをすべてカバーしています。サポートされているモデルプロバイダーの完全なリストは[モデルプロバイダーセクション](https://docs.dify.ai/getting-started/readme/model-providers)で見つけることができます。
-            3. **プロンプトIDE**：プロンプトの作成、モデルの性能比較、そしてチャットベースのアプリに音声合成などの追加機能を加えるための直感的なインターフェースです。
-            4. **RAGパイプライン**：ドキュメントの取り込みから検索までをカバーする広範なRAG機能を備えており、PDF、PPT、およびその他の一般的なドキュメント形式からのテキスト抽出をサポートします。
-            5. **エージェント機能**：LLM関数呼び出しまたはReActに基づいてエージェントを定義し、エージェントにプリビルドまたはカスタムツールを追加できます。Difyは、Google検索、DELL·E、Stable Diffusion、WolframAlphaなど、AIエージェント向けに50以上の組み込みツールを提供しています。
-            6. **LLMOps**：アプリケーションのログと性能を時間の経過とともに監視し、分析します。プロダクションデータと注釈に基づいてプロンプト、データセット、モデルを継続的に改善することができます。
-            7. **バックエンド・アズ・ア・サービス**：Difyのすべての製品には対応するAPIが付属しており、Difyをビジネスロジックに簡単に統合できます。
-
-            ## デプロイ
-
-            Difyをデプロイするには、右上の「デプロイ」ボタンをクリックし、必要なドメイン名を入力してください。デプロイ後、`https://<your-domain>.zeabur.app`でDifyアプリにアクセスできます。
-
-            ## アプリの構造
-
-            - Redis、PostgreSQL、MINIO、Webaviateがデータストレージとキャッシングに使用されます。
-            - `api`、`worker`、`web`、`sandbox`はDifyのマイクロサービスです。
-            - `nginx`はDifyのゲートウェイです。マイクロサービスを単一のホストに統合します。言い換えれば、**それがDifyアプリのエントリーポイントです。**
-    zh-CN:
-        description: Dify 是一个开源的大型语言模型(LLM)应用开发平台。
-        readme: |-
-            Dify 是一个开源的 LLM 应用开发平台。它的直观界面结合了 AI 工作流、RAG 流水线、代理功能、模型管理、可观察性特征等，使您能够快速从原型开发到生产。
-
-            ## 功能
-
-            1. **工作流**：在可视化画布上构建和测试强大的 AI 工作流，利用以下所有功能及更多功能。
-            2. **全面的模型支持**：与数十家推理提供商和自托管解决方案的数百个专有/开源 LLM 无缝集成，涵盖 GPT、Mistral、Llama3 和任何兼容 OpenAI API 的模型。支持的模型提供商的完整列表可以在 [模型提供商部分](https://docs.dify.ai/getting-started/readme/model-providers) 中找到。
-            3. **提示 IDE**：用于设计提示、比较模型性能并为基于聊天的应用程序添加其他功能（如文本转语音）的直观界面。
-            4. **RAG 流水线**：广泛的 RAG 功能，涵盖从文档摄取到检索的所有内容，开箱即用支持从 PDF、PPT 和其他常见文档格式中提取文本。
-            5. **代理功能**：您可以基于 LLM 函数调用或 ReAct 定义代理，并为代理添加预构建或自定义工具。Dify 为 AI 代理提供了 50 多种内置工具，例如 Google Search、DELL·E、Stable Diffusion 和 WolframAlpha。
-            6. **LLMOps**：监控和分析应用程序日志和性能随时间的变化。您可以根据生产数据和注释不断改进提示、数据集和模型。
-            7. **后端即服务**：Dify 的所有产品都附带相应的 API，因此您可以轻松地将 Dify 集成到您自己的业务逻辑中。
-
-            ## 部署
-
-            要部署 Dify，请点击右上角的“部署”按钮，并填写所需的域名。部署后，您可以在 `https://<your-domain>.zeabur.app` 访问您的 Dify 应用。
-
-            ## 应用结构
-
-            - Redis、PostgreSQL、MINIO 和 Webaviate 用于数据存储和缓存。
-            - `api`、`worker`、`web` 和 `sandbox` 是 Dify 的微服务。
-            - `nginx` 是 Dify 的网关。它将微服务集成到一个主机上。换句话说，**它是您的 Dify 应用的入口点。**
-    zh-TW:
-        description: Dify 是一個開源的大型語言模型(LLM)應用開發平台。
-        readme: |-
-            Dify 是一個開源的 LLM 應用程式開發平台。它的直觀介面結合了 AI 工作流程、RAG 流水線、代理功能、模型管理、可觀察性特徵等，使您能夠快速從原型開發到生產。
-
-            ## 功能
-
-            1. **工作流程**：在可視化畫布上建構和測試強大的 AI 工作流程，利用以下所有功能及更多功能。
-            2. **全面的模型支援**：與數十家推理提供商和自託管解決方案的數百個專有/開源 LLM 無縫整合，涵蓋 GPT、Mistral、Llama3 和任何相容 OpenAI API 的模型。支援的模型提供商的完整列表可以在 [模型提供商部分](https://docs.dify.ai/getting-started/readme/model-providers) 中找到。
-            3. **提示 IDE**：用於設計提示、比較模型效能並為基於聊天的應用程式加入其他功能（如文字轉語音）的直觀介面。
-            4. **RAG 流水線**：廣泛的 RAG 功能，涵蓋從文件攝取到檢索的所有內容，開箱即用支援從 PDF、PPT 和其他常見檔案格式中提取文字。
-            5. **代理功能**：您可以基於 LLM 函數呼叫或 ReAct 定義代理，並為代理加入預建構或自訂工具。Dify 為 AI 代理提供了 50 多種內建工具，例如 Google Search、DELL·E、Stable Diffusion 和 WolframAlpha。
-            6. **LLMOps**：監控和分析應用程式日誌和效能隨時間的變化。您可以根據生產資料和註釋不斷改進提示、資料集和模型。
-            7. **後端即服務**：Dify 的所有產品都附帶相應的 API，因此您可以輕鬆地將 Dify 整合到您自己的業務邏輯中。
-
-            ## 部署
-
-            要部署 Dify，請點擊右上角的「部署」按鈕，並填寫所需的域名。部署後，您可以在 `https://<your-domain>.zeabur.app` 存取您的 Dify 應用程式。
-
-            ## 應用程式結構
-
-            - Redis、PostgreSQL、MINIO 和 Webaviate 用於資料儲存和快取。
-            - `api`、`worker`、`web` 和 `sandbox` 是 Dify 的微服務。
-            - `nginx` 是 Dify 的閘道。它將微服務整合到一個主機上。換句話說，**它是您的 Dify 應用程式的入口點。**
