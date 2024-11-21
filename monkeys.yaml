@@ -198,6 +198,8 @@ spec:
                       mc alias set myminio http://localhost:9000 $MINIO_USERNAME $MINIO_PASSWORD
                       echo "Creating bucket '$MINIO_DEFAULT_BUCKET'"
                       mc mb myminio/$MINIO_DEFAULT_BUCKET
+                      echo "Setting bucket '$MINIO_DEFAULT_BUCKET' to public"
+                      mc anonymous set public myminio/$MINIO_DEFAULT_BUCKET
                       wait $MINIO_PID
             ports:
                 - id: web
@@ -423,7 +425,7 @@ spec:
                       secretAccessKey: ${MINIO_PASSWORD}
                       region: us-east-1
                       bucket: monkeys
-                      publicAccessUrl: http://$ZEABUR_CONSOLE_URL/monkeys
+                      publicAccessUrl: /minio-statics
                     
                     conductor:
                       baseUrl: http://${CONDUCTOR_HOST}:8080/api
@@ -513,6 +515,32 @@ spec:
                     server {
                       listen 80;
                       server_name _;
+
+                      location /minio/ {
+                        proxy_pass http://${MINIO_HOST}:9090/;
+                        include proxy.conf;
+                      }
+
+                      location /minio-statics/ {
+                        proxy_pass http://${MINIO_HOST}:9000/monkeys/;
+                        include proxy.conf;
+                      }
+
+                      location /conductor-server/ {
+                        proxy_pass http://${CONDUCTOR_HOST}:8080/;
+                        include proxy.conf;
+                      }
+
+                      location /conductor-ui/ {
+                        proxy_pass http://${CONDUCTOR_HOST}:8080/;
+                        include proxy.conf;
+                      }
+
+                      location /oneapi/ {
+                        proxy_pass http://${ONEAPI_HOST}:3000/;
+                        include proxy.conf;
+                      }
+
                       location /api {
                         proxy_pass http://${SERVER_HOST}:3000;
                         include proxy.conf;
@@ -580,7 +608,7 @@ spec:
                     secretAccessKey: ${MINIO_PASSWORD}
                     region: us-east-1
                     bucket: monkeys
-                    publicAccessUrl: http://${ZEABUR_CONSOLE_URL}/monkeys
+                    publicAccessUrl: /minio-statics
         - name: monkey-tools-internet
           icon: https://avatars.githubusercontent.com/u/160759882?s=200&v=4
           template: PREBUILT
