@@ -378,6 +378,10 @@ spec:
                       baseURL: http://${ONEAPI_HOST}:3000
                       rootUsername: root
                       rootPassword: "123456"
+                    comfyui:
+                      defaultServer: http://${COMFYUI_HOST}:8188
+                      refreshCron: '*/1 * * * *'
+
         - name: oneapi
           icon: https://raw.githubusercontent.com/songquanpeng/one-api/main/web/default/public/logo.png
           template: PREBUILT
@@ -609,3 +613,52 @@ spec:
                         dimension: 512
                       - name: moka-ai/m3e-base
                         dimension: 768
+
+        - name: comfyui
+          icon: https://avatars.githubusercontent.com/u/121283862?v=4
+          template: PREBUILT
+          resources:
+            limit:
+              cpu: 4
+              memory: 16Gi
+          spec:
+            gpu: 
+              enabled: true
+            source:
+                image: infmonkeys/comfyui:latest
+            ports:
+                - id: web
+                  port: 8188
+                  type: HTTP
+            volumes:
+                - id: comfyui-models
+                  dir: /app/ComfyUI/models
+                - id: comfyui-custom-nodes
+                  dir: /app/ComfyUI/custom_nodes
+                - id: comfyui-input
+                  dir: /app/ComfyUI/input
+                - id: comfyui-output
+                  dir: /app/ComfyUI/output
+                - id: comfyui-venv
+                  dir: /app/ComfyUI/venv
+                - id: comfyui-huggingface
+                  dir: /root/.cache/huggingface
+            env:
+                S3_ENABLED:
+                    default: "true"
+                S3_ENDPOINT_URL:
+                    default: http://${MINIO_HOST}:9000
+                S3_ACCESS_KEY_ID:
+                    default: ${MINIO_USERNAME}
+                S3_SECRET_ACCESS_KEY:
+                    default: ${MINIO_PASSWORD}
+                S3_REGION:
+                    default: us-east-1
+                S3_BUCKET:
+                    default: monkeys
+                S3_PUBLIC_ACCESS_URL:
+                    default: /minio-statics
+                S3_ADDRESSING_STYLE:
+                    default: path
+                AUTO_UPGRADE_COMFYFILE:
+                    default: "true"
